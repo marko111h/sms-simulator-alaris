@@ -32,11 +32,15 @@ async def submit_sms(request: Request):
     message = params.get("message")
     command = params.get("command")
 
+    # Novi log za TAČAN "command" value
+    logging.info(f"Received command value: {repr(command)}")
+
     # Dozvolji command=submit ili command=s za kompatibilnost sa Alaris
     if username != VALID_USERNAME or password != VALID_PASSWORD:
         return JSONResponse({"status": "ERROR", "message": "Invalid credentials"}, status_code=401)
 
-    if command not in ("submit", "s"):
+    # Fleksibilna provera komande
+    if not command or command.strip().lower() not in ("submit", "s"):
         return JSONResponse({"status": "ERROR", "message": "Invalid command"}, status_code=400)
 
     message_id = "MSG" + (dnis[-4:] if dnis else "0000") + "01"
