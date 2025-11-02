@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+import asyncio
 import logging
 
 app = FastAPI()
@@ -39,7 +40,9 @@ async def submit_sms(request: Request):
     message_id = "MSG" + (dnis[-4:] if dnis else "0000") + "01"
     message_status_db[message_id] = "SENT"
 
-    # Trenutno izbacujemo deliveryStatus jer parser ne očekuje to polje
+    # Pokreni asinhroni zadatak za menjanje statusa nakon 5 sekundi
+    asyncio.create_task(simulate_delivery_status(message_id))
+
     return JSONResponse({
         "status": "submitted",
         "messageId": message_id
@@ -58,10 +61,14 @@ async def pull_report(request: Request):
     if account != VALID_ACCOUNT or password != VALID_PASSWORD:
         return JSONResponse({"status": "ERROR", "message": "Invalid credentials"}, status_code=401)
 
-    message_status = message_status_db.get(transaction_id, "UNKNOWN")
+    message_status = message_status_db.get(transaction_id, {"status": "UNKNOWN"})
 
     return JSONResponse({
         "transactionId": transaction_id,
         "status": message_status,
         "count": count
     })
+
+async def simulate_delivery_status(message_id):
+    await asyncio.sleep(5)
+    message_status_db[message_id] = "DELIVERED"
