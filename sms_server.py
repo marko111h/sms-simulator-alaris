@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import asyncio
 import logging
+import uuid
 
 app = FastAPI()
 
@@ -37,8 +38,8 @@ async def submit_sms(request: Request):
     if not command or command.strip().lower() not in ("submit", "s"):
         return JSONResponse({"status": "ERROR", "message": "Invalid command"}, status_code=400)
 
-    message_id = "MSG" + (dnis[-4:] if dnis else "0000") + "01"
-    message_status_db[message_id] = "SENT"
+    message_id = str(uuid.uuid4())
+    message_status_db[message_id] = "DELIVERED"
 
     # Pokreni asinhroni zadatak za menjanje statusa nakon 5 sekundi
     asyncio.create_task(simulate_delivery_status(message_id))
