@@ -39,22 +39,11 @@ async def submit_sms(request: Request):
     message_id = "MSG" + (dnis[-4:] if dnis else "0000") + "01"
     message_status_db[message_id] = "SENT"
 
-    # Umesto asyncio.create_task pokreni update bez čekanja
-    update_delivery_status(message_id)
-
+    # Trenutno izbacujemo deliveryStatus jer parser ne očekuje to polje
     return JSONResponse({
-        "status": "SUCCESS",
-        "messageId": message_id,
-        "deliveryStatus": message_status_db[message_id]
+        "status": "submitted",
+        "messageId": message_id
     })
-
-def update_delivery_status(message_id):
-    import threading
-    import time
-    def delayed_update():
-        time.sleep(5)
-        message_status_db[message_id] = "DELIVERED"
-    threading.Thread(target=delayed_update).start()
 
 @app.post("/sms/v2/pull-report")
 async def pull_report(request: Request):
