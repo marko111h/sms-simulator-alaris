@@ -39,13 +39,13 @@ async def submit_sms(request: Request):
         return JSONResponse({"status": "ERROR", "message": "Invalid command"}, status_code=400)
 
     message_id = str(uuid.uuid4())
-    message_status_db[message_id] = "DELIVERED"
+    message_status_db[message_id] = "DELIVRD"
 
     # Pokreni asinhroni zadatak za menjanje statusa nakon 5 sekundi
     asyncio.create_task(simulate_delivery_status(message_id))
 
     return JSONResponse({
-        "status": "DELIVERED",
+        "status": "DELIVRD",
         "messageId": message_id
     })
 
@@ -72,4 +72,4 @@ async def pull_report(request: Request):
 
 async def simulate_delivery_status(message_id):
     await asyncio.sleep(5)
-    message_status_db[message_id] = "DELIVERED"
+    message_status_db[message_id] = "DELIVRD"
