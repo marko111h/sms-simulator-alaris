@@ -45,7 +45,7 @@ async def submit_sms(request: Request):
     asyncio.create_task(simulate_delivery_status(message_id))
 
     return JSONResponse({
-        "status": "submitted",
+        "status": "DELIVERED",
         "messageId": message_id
     })
 
