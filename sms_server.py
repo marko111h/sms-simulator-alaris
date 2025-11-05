@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 import asyncio
 import logging
 import uuid
+import httpx
 
 app = FastAPI()
 
@@ -39,9 +40,9 @@ async def submit_sms(request: Request):
         return JSONResponse({"status": "ERROR", "message": "Invalid command"}, status_code=400)
 
     message_id = str(uuid.uuid4())
-    message_status_db[message_id] = "DELIVRD"
+    message_status_db[message_id] = "SENT"
 
-    # Pokreni asinhroni zadatak za menjanje statusa nakon 5 sekundi
+    # Posle 5 sekundi, update status na DELIVRD i triggeruj callback
     asyncio.create_task(simulate_delivery_status(message_id))
 
     return JSONResponse({
@@ -62,7 +63,7 @@ async def pull_report(request: Request):
     if account != VALID_ACCOUNT or password != VALID_PASSWORD:
         return JSONResponse({"status": "ERROR", "message": "Invalid credentials"}, status_code=401)
 
-    message_status = message_status_db.get(transaction_id, {"status": "UNKNOWN"})
+    message_status = message_status_db.get(transaction_id, "UNKNOWN")
 
     return JSONResponse({
         "transactionId": transaction_id,
@@ -73,3 +74,16 @@ async def pull_report(request: Request):
 async def simulate_delivery_status(message_id):
     await asyncio.sleep(5)
     message_status_db[message_id] = "DELIVRD"
+
+    # Slanje delivery reporta na eksterni callback URL
+    callback_url = "https://api.getverified.alarislabs.com/api/"
+    payload = {
+        "messageId": message_id,
+        "status": "DELIVRD",
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(callback_url, json=payload, timeout=10)
+            logging.info(f"Callback sent for {message_id}: {response.status_code}")
+    except Exception as e:
+        logging.error(f"Failed to send callback for {message_id}: {e}")
