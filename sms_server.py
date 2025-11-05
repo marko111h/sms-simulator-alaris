@@ -81,6 +81,8 @@ async def simulate_delivery_status(message_id):
         "messageId": message_id,
         "status": "DELIVRD",
     }
+    logging.info(f"Callback payload sent: {payload}")
+    logging.info(f"Callback URL: {callback_url}")
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(callback_url, json=payload, timeout=10)
