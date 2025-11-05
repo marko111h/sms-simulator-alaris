@@ -5,6 +5,7 @@ import logging
 import uuid
 import httpx
 
+logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 
 VALID_USERNAME = "testuser"
