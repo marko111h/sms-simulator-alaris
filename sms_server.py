@@ -1,9 +1,9 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 import asyncio
+import httpx
 import logging
 import uuid
-import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
@@ -42,8 +42,6 @@ async def submit_sms(request: Request):
 
     message_id = str(uuid.uuid4())
     message_status_db[message_id] = "SENT"
-
-    # Posle 5 sekundi, update status na DELIVRD i triggeruj callback
     asyncio.create_task(simulate_delivery_status(message_id))
 
     return JSONResponse({
@@ -76,14 +74,17 @@ async def simulate_delivery_status(message_id):
     await asyncio.sleep(5)
     message_status_db[message_id] = "DELIVRD"
 
-    # Slanje delivery reporta na eksterni callback URL
     callback_url = "https://api.getverified.alarislabs.com/api/"
     payload = {
-        "messageId": message_id,
-        "status": "DELIVRD",
+        "command": "deliver",
+        "dlvrMsgId": message_id,
+        "dlvrMsgStat": "DELIVRD",
+        "username": VALID_USERNAME,
+        "password": VALID_PASSWORD
     }
     logging.info(f"Callback payload sent: {payload}")
     logging.info(f"Callback URL: {callback_url}")
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(callback_url, json=payload, timeout=10)
