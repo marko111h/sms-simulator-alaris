@@ -14,9 +14,10 @@ VALID_ACCOUNT = "111"
 
 message_status_db = {}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     return {"status": "ok"}
+
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
