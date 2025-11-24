@@ -2,6 +2,7 @@ import asyncio
 import httpx
 import logging
 import uuid
+import random
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -77,13 +78,14 @@ async def pull_report(request: Request):
 
 async def simulate_delivery_status(message_id):
     await asyncio.sleep(5)
-    message_status_db[message_id] = "DELIVRD"
+    status = "DELIVRD" if random.random() < 0.9 else "UNDELIVRD"
+    message_status_db[message_id] = status
 
     callback_url = "https://api.getverified.alarislabs.com/api/"
     payload = {
         "command": "deliver",
         "dlvrMsgId": message_id,
-        "dlvrMsgStat": "DELIVRD",
+        "dlvrMsgStat": status,
         "username": VALID_USERNAME,
         "password": VALID_PASSWORD
     }
