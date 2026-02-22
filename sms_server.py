@@ -3,6 +3,7 @@ import httpx
 import logging
 import uuid
 import random
+import traceback
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -81,6 +82,7 @@ async def simulate_delivery_status(message_id):
     status = "DELIVRD" if random.random() < 0.9 else "UNDELIVRD"
     message_status_db[message_id] = status
 
+    
     callback_url = "https://api.getverified.alarislabs.com/api/"
     payload = {
         "command": "deliver",
@@ -89,12 +91,17 @@ async def simulate_delivery_status(message_id):
         "username": VALID_USERNAME,
         "password": VALID_PASSWORD
     }
-    logging.info(f"Callback payload sent: {payload}")
-    logging.info(f"Callback URL: {callback_url}")
 
+    logging.info(f"🔄 Generating delivery status '{status}' for message {message_id}")
+    logging.info(f"📤 Sending callback to: {callback_url}")
+    logging.info(f"📦 Payload: {payload}")\
+    
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(callback_url, json=payload, timeout=10)
-            logging.info(f"Callback sent for {message_id}: {response.status_code}")
+            async with httpx.AsyncClient() as client:
+                response = await client.post(callback_url, json=payload, timeout=10)
+                if response.status_code == 200:
+                    logging.info(f"✅ Callback SUCCESS for {message_id}: {response.status_code}")
+                else:
+                    logging.warning(f"❌ Callback FAILED for {message_id}: {response.status_code}")
     except Exception as e:
-        logging.error(f"Failed to send callback for {message_id}: {e}")
+            logging.error(f"💥 Callback ERROR for {message_id}: {type(e).__name__} - {e}")
