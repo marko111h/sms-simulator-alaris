@@ -77,19 +77,22 @@ async def pull_report(request: Request):
         "count": count
     })
 
-async def simulate_delivery_status(message_id):
+async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
     await asyncio.sleep(5)
     status = "DELIVRD" if random.random() < 0.9 else "UNDELIVRD"
     message_status_db[message_id] = status
 
     
-    callback_url = "https://api.getverified.alarislabs.com/api/"
+    callback_url = "https://sms.getverified.alarislabs.com:8004/api/"
+
     payload = {
         "command": "deliver",
         "dlvrMsgId": message_id,
         "dlvrMsgStat": status,
         "username": VALID_USERNAME,
-        "password": VALID_PASSWORD
+        "password": VALID_PASSWORD,
+        "ani": ani,
+        "dnis": dnis
     }
 
     logging.info(f"🔄 Generating delivery status '{status}' for message {message_id}")
