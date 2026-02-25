@@ -83,7 +83,7 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
     message_status_db[message_id] = status
 
     
-    callback_url = "https://sms.getverified.alarislabs.com:8004/api/"
+    callback_url = "https://sms.getverified.alarislabs.com:8003/api/"
 
     payload = {
         "command": "deliver",
