@@ -81,7 +81,7 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
     await asyncio.sleep(5)
     status = "DELIVRD" if random.random() < 0.9 else "UNDELIVRD"
     message_status_db[message_id] = status
-
+    
     
     callback_url = "https://sms.getverified.alarislabs.com:8003/api/"
 
@@ -97,7 +97,11 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
 
     logging.info(f"🔄 Generating delivery status '{status}' for message {message_id}")
     logging.info(f"📤 Sending callback to: {callback_url}")
-    logging.info(f"📦 Payload: {payload}")\
+    logging.info(f"📦 Payload: {payload}")
+
+    async with httpx.AsyncClient() as client_ip:
+        ip_response = await client_ip.get("https://httpbin.org/ip")
+        logging.info(f"🚀 RENDER OUTBOUND IP: {ip_response.json()}")
     
     try:
             async with httpx.AsyncClient() as client:
