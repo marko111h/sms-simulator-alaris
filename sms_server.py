@@ -32,12 +32,12 @@ async def submit_sms(request: Request):
     params = dict(request.query_params)
     logging.info(f"API /api params: {params}")
 
-    username = params.get("username")
-    password = params.get("password")
+    username = params.get("username", "").strip()  # ← OVO
+    password = params.get("password", "").strip()
     ani = params.get("ani")
     dnis = params.get("dnis")
     message = params.get("message")
-    command = params.get("command")
+    command = params.get("command", "").strip()
 
     logging.info(f"Received command value: {repr(command)}")
 
