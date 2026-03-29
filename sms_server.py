@@ -100,7 +100,7 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
     status = "DELIVRD" if random.random() < 0.9 else "UNDELIVRD"
     message_status_db[message_id] = status
 
-    callback_url = "http://sms.getverified.alarislabs.com:8003/api"
+    callback_url = "http://62.67.222.164:8003/api"
 
     payload = {
         "command": "deliver",
