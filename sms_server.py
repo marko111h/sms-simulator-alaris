@@ -118,27 +118,30 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
 
     try:
         if QUOTAGUARD_URL:
+            from urllib.parse import urlparse
+            parsed = urlparse(QUOTAGUARD_URL)
+
+            logging.info(f"🔍 QUOTAGUARD URL RAW: {repr(QUOTAGUARD_URL)}")
+            logging.info(f"🔍 QUOTAGUARD scheme: {parsed.scheme}")
+            logging.info(f"🔍 QUOTAGUARD hostname: {parsed.hostname}")
+            logging.info(f"🔍 QUOTAGUARD port: {parsed.port}")
             logging.info("🔁 Using QuotaGuard static proxy")
-            async with httpx.AsyncClient(proxy=QUOTAGUARD_URL, timeout=10) as client:
+
+            async with httpx.AsyncClient(proxy=QUOTAGUARD_URL, timeout=20) as client:
                 ip_response = await client.get("https://httpbin.org/ip")
                 logging.info(f"🚀 OUTBOUND IP VIA PROXY: {ip_response.text}")
 
                 response = await client.get(callback_url, params=payload)
         else:
             logging.warning("⚠️ QUOTAGUARDSTATIC_URL is not set, using direct outbound")
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=20) as client:
                 ip_response = await client.get("https://httpbin.org/ip")
                 logging.info(f"🚀 OUTBOUND IP DIRECT: {ip_response.text}")
 
                 response = await client.get(callback_url, params=payload)
 
-        if response.status_code == 200:
-            logging.info(f"✅ Callback SUCCESS for {message_id}: {response.status_code}")
-        else:
-            logging.warning(
-                f"❌ Callback FAILED for {message_id}: "
-                f"{response.status_code} - {response.text}"
-            )
+        logging.info(f"📨 Callback response code: {response.status_code}")
+        logging.info(f"📨 Callback response text: {response.text}")
 
     except Exception as e:
         logging.error(f"💥 Callback ERROR for {message_id}: {type(e).__name__} - {e}")
