@@ -3,7 +3,8 @@ import httpx
 import logging
 import uuid
 import random
-import traceback
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -16,6 +17,9 @@ VALID_ACCOUNT = "111"
 
 message_status_db = {}
 
+QUOTAGUARD_URL = os.getenv("QUOTAGUARDSTATIC_URL", "").strip()
+
+
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     return {"status": "ok"}
@@ -27,34 +31,43 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     return response
 
+
 @app.get("/api")
 async def submit_sms(request: Request):
     params = dict(request.query_params)
     logging.info(f"API /api params: {params}")
 
-    username = params.get("username", "").strip()  # ← OVO
+    username = params.get("username", "").strip()
     password = params.get("password", "").strip()
-    ani = params.get("ani")
-    dnis = params.get("dnis")
-    message = params.get("message")
+    ani = params.get("ani", "").strip()
+    dnis = params.get("dnis", "").strip()
+    message = params.get("message", "").strip()
     command = params.get("command", "").strip()
 
     logging.info(f"Received command value: {repr(command)}")
 
     if username != VALID_USERNAME or password != VALID_PASSWORD:
-        return JSONResponse({"status": "ERROR", "message": "Invalid credentials"}, status_code=401)
+        return JSONResponse(
+            {"status": "ERROR", "message": "Invalid credentials"},
+            status_code=401
+        )
 
-    if not command or command.strip().lower() not in ("submit", "s"):
-        return JSONResponse({"status": "ERROR", "message": "Invalid command"}, status_code=400)
+    if not command or command.lower() not in ("submit", "s"):
+        return JSONResponse(
+            {"status": "ERROR", "message": "Invalid command"},
+            status_code=400
+        )
 
     message_id = str(uuid.uuid4())
     message_status_db[message_id] = "SENT"
-    asyncio.create_task(simulate_delivery_status(message_id))
+
+    asyncio.create_task(simulate_delivery_status(message_id, ani, dnis, message))
 
     return JSONResponse({
         "status": "submitted",
         "messageId": message_id
     })
+
 
 @app.post("/sms/v2/pull-report")
 async def pull_report(request: Request):
@@ -67,7 +80,10 @@ async def pull_report(request: Request):
     count = params.get("count")
 
     if account != VALID_ACCOUNT or password != VALID_PASSWORD:
-        return JSONResponse({"status": "ERROR", "message": "Invalid credentials"}, status_code=401)
+        return JSONResponse(
+            {"status": "ERROR", "message": "Invalid credentials"},
+            status_code=401
+        )
 
     message_status = message_status_db.get(transaction_id, "UNKNOWN")
 
@@ -77,13 +93,14 @@ async def pull_report(request: Request):
         "count": count
     })
 
+
 async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
     await asyncio.sleep(5)
+
     status = "DELIVRD" if random.random() < 0.9 else "UNDELIVRD"
     message_status_db[message_id] = status
-    
-    
-    callback_url = "https://sms-proxy-3vt7.onrender.com/proxy"
+
+    callback_url = "http://sms.getverified.alarislabs.com:8003/api"
 
     payload = {
         "command": "deliver",
@@ -99,16 +116,26 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
     logging.info(f"📤 Sending callback to: {callback_url}")
     logging.info(f"📦 Payload: {payload}")
 
-    async with httpx.AsyncClient() as client_ip:
-        ip_response = await client_ip.get("https://httpbin.org/ip")
-        logging.info(f"🚀 RENDER OUTBOUND IP: {ip_response.json()}")
-    
+    proxies = None
+    if QUOTAGUARD_URL:
+        proxies = {
+            "http://": QUOTAGUARD_URL,
+            "https://": QUOTAGUARD_URL
+        }
+        logging.info("🔁 Using QuotaGuard static proxy")
+
     try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(callback_url, json=payload, timeout=10)
-                if response.status_code == 200:
-                    logging.info(f"✅ Callback SUCCESS for {message_id}: {response.status_code}")
-                else:
-                    logging.warning(f"❌ Callback FAILED for {message_id}: {response.status_code}")
+        async with httpx.AsyncClient(proxies=proxies, timeout=10) as client:
+            ip_response = await client.get("https://httpbin.org/ip")
+            logging.info(f"🚀 OUTBOUND IP VIA PROXY: {ip_response.text}")
+
+            response = await client.get(callback_url, params=payload)
+            if response.status_code == 200:
+                logging.info(f"✅ Callback SUCCESS for {message_id}: {response.status_code}")
+            else:
+                logging.warning(
+                    f"❌ Callback FAILED for {message_id}: "
+                    f"{response.status_code} - {response.text}"
+                )
     except Exception as e:
-            logging.error(f"💥 Callback ERROR for {message_id}: {type(e).__name__} - {e}")
+        logging.error(f"💥 Callback ERROR for {message_id}: {type(e).__name__} - {e}")
