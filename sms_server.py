@@ -122,6 +122,7 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
             parsed = urlparse(QUOTAGUARD_URL)
 
             logging.info(f"🔍 QUOTAGUARD URL RAW: {repr(QUOTAGUARD_URL)}")
+            logging.info(f"🔍 Using proxy: {bool(QUOTAGUARD_URL)}")
             logging.info(f"🔍 QUOTAGUARD scheme: {parsed.scheme}")
             logging.info(f"🔍 QUOTAGUARD hostname: {parsed.hostname}")
             logging.info(f"🔍 QUOTAGUARD port: {parsed.port}")
