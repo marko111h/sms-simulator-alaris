@@ -112,38 +112,34 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
         "dnis": dnis
     }
 
-    logging.info(f"🔄 Generating delivery status '{status}' for message {message_id}")
-    logging.info(f"📤 Sending callback to: {callback_url}")
-    logging.info(f"📦 Payload: {payload}")
+    logging.info(f"Generating delivery status '{status}' for message {message_id}")
+    logging.info(f"Sending callback to: {callback_url}")
+    logging.info(f"Payload: {payload}")
 
     try:
         if QUOTAGUARD_URL:
             from urllib.parse import urlparse
             parsed = urlparse(QUOTAGUARD_URL)
 
-            logging.info(f"🔍 QUOTAGUARD URL RAW: {repr(QUOTAGUARD_URL)}")
-            logging.info(f"🔍 Using proxy: {bool(QUOTAGUARD_URL)}")
-            logging.info(f"🔍 Using proxy: {bool(QUOTAGUARD_URL)}")
-            logging.info(f"🔍 QUOTAGUARD scheme: {parsed.scheme}")
-            logging.info(f"🔍 QUOTAGUARD hostname: {parsed.hostname}")
-            logging.info(f"🔍 QUOTAGUARD port: {parsed.port}")
-            logging.info("🔁 Using QuotaGuard static proxy")
+            logging.info(f"QUOTAGUARD hostname: {parsed.hostname}")
+            logging.info(f"QUOTAGUARD port: {parsed.port}")
+            logging.info("Using QuotaGuard static proxy")
 
             async with httpx.AsyncClient(proxy=QUOTAGUARD_URL, timeout=20) as client:
                 ip_response = await client.get("https://httpbin.org/ip")
-                logging.info(f"🚀 OUTBOUND IP VIA PROXY: {ip_response.text}")
+                logging.info(f"OUTBOUND IP VIA PROXY: {ip_response.text}")
 
                 response = await client.get(callback_url, params=payload)
+                logging.info(f"Request headers sent: {dict(response.request.headers)}")
+
         else:
-            logging.warning("⚠️ QUOTAGUARDSTATIC_URL is not set, using direct outbound")
+            logging.warning("QUOTAGUARDSTATIC_URL is not set, using direct outbound")
             async with httpx.AsyncClient(timeout=20) as client:
-                ip_response = await client.get("https://httpbin.org/ip")
-                logging.info(f"🚀 OUTBOUND IP DIRECT: {ip_response.text}")
-
                 response = await client.get(callback_url, params=payload)
+                logging.info(f"Request headers sent: {dict(response.request.headers)}")
 
-        logging.info(f"📨 Callback response code: {response.status_code}")
-        logging.info(f"📨 Callback response text: {response.text}")
+        logging.info(f"Callback response code: {response.status_code}")
+        logging.info(f"Callback response text: {response.text}")
 
     except Exception as e:
-        logging.error(f"💥 Callback ERROR for {message_id}: {type(e).__name__} - {e}")
+        logging.error(f"Callback ERROR for {message_id}: {type(e).__name__} - {e}")
