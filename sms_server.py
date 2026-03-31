@@ -120,23 +120,16 @@ async def simulate_delivery_status(message_id, ani="", dnis="", message=""):
         if QUOTAGUARD_URL:
             from urllib.parse import urlparse
             parsed = urlparse(QUOTAGUARD_URL)
-
             logging.info(f"QUOTAGUARD hostname: {parsed.hostname}")
-            logging.info(f"QUOTAGUARD port: {parsed.port}")
-            logging.info("Using QuotaGuard static proxy")
+            logging.info(f"Using QuotaGuard static proxy")
 
             async with httpx.AsyncClient(proxy=QUOTAGUARD_URL, timeout=20) as client:
-                ip_response = await client.get("https://httpbin.org/ip")
-                logging.info(f"OUTBOUND IP VIA PROXY: {ip_response.text}")
-
                 response = await client.get(callback_url, params=payload)
-                logging.info(f"Request headers sent: {dict(response.request.headers)}")
 
         else:
             logging.warning("QUOTAGUARDSTATIC_URL is not set, using direct outbound")
             async with httpx.AsyncClient(timeout=20) as client:
                 response = await client.get(callback_url, params=payload)
-                logging.info(f"Request headers sent: {dict(response.request.headers)}")
 
         logging.info(f"Callback response code: {response.status_code}")
         logging.info(f"Callback response text: {response.text}")
