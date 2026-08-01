@@ -186,11 +186,17 @@ async def delivery_worker(worker_id: int):
 
 
 async def cleanup_old_messages():
-    """Sprecava da message_status_db raste beskonacno tokom velikih testova."""
+    """Sprecava da message_status_db raste beskonacno tokom velikih testova.
+    NAPOMENA: 'SENT' zapisi se NIKAD ne brisu po vremenu - samo kad postanu
+    DELIVRD/UNDELIVRD i onda prodje TTL. Ovo sprecava brisanje poruka koje
+    jos cekaju u redu."""
     while True:
         await asyncio.sleep(60)
         cutoff = time.time() - STATUS_TTL_SECONDS
-        expired = [mid for mid, (_, ts) in message_status_db.items() if ts < cutoff]
+        expired = [
+            mid for mid, (status, ts) in message_status_db.items()
+            if status != "SENT" and ts < cutoff
+        ]
         for mid in expired:
             del message_status_db[mid]
         if expired:
