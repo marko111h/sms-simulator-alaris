@@ -21,7 +21,7 @@ QUOTAGUARD_URL = os.getenv("QUOTAGUARDSTATIC_URL", "").strip()
 # Koliko poruka se obradjuje ISTOVREMENO. Na Free planu (0.15 CPU / 512MB)
 # drzi ovo malo (5-10). Ako podignes na Starter/Standard plan, mozes probati
 # vece vrednosti (15-30) i pratiti Metrics tab da vidis gde puca.
-NUM_WORKERS = int(os.getenv("NUM_WORKERS", "10"))
+NUM_WORKERS = int(os.getenv("NUM_WORKERS", "50"))
 
 # Koliko dugo cuvamo status poruke u memoriji pre nego sto ga obrisemo (u sekundama).
 STATUS_TTL_SECONDS = 300
