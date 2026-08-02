@@ -16,20 +16,25 @@ VALID_USERNAME = "testuser"
 VALID_PASSWORD = "testpass"
 VALID_ACCOUNT = "111"
 
+CALLBACK_URL = "http://62.67.222.164:8003/api"
+
 QUOTAGUARD_URL = os.getenv("QUOTAGUARDSTATIC_URL", "").strip()
 
-# Koliko poruka se obradjuje ISTOVREMENO. Na Free planu (0.15 CPU / 512MB)
-# drzi ovo malo (5-10). Ako podignes na Starter/Standard plan, mozes probati
-# vece vrednosti (15-30) i pratiti Metrics tab da vidis gde puca.
+# Koliko poruka se obradjuje ISTOVREMENO.
 NUM_WORKERS = int(os.getenv("NUM_WORKERS", "50"))
 
-# Koliko dugo cuvamo status poruke u memoriji pre nego sto ga obrisemo (u sekundama).
+# Koliko dugo cuvamo status poruke u memoriji pre brisanja (sekunde).
 STATUS_TTL_SECONDS = 300
 
+# Retry logika za callback.
+MAX_RETRIES = 3
+RETRY_DELAY = 10  # sekundi izmedju pokusaja
+
 # message_status_db: {message_id: (status, timestamp)}
+# Status ostaje "SENT" dok isporuka nije POTVRDJENA (200 od downstream-a).
 message_status_db: dict[str, tuple[str, float]] = {}
 
-# Red poruka koje cekaju da se obrade (asyncio.Queue = zivi u RAM-u ovog procesa).
+# Red poruka koje cekaju obradu (zivi u RAM-u ovog procesa).
 delivery_queue: asyncio.Queue = asyncio.Queue()
 
 http_client: httpx.AsyncClient | None = None
@@ -49,11 +54,10 @@ async def lifespan(app: FastAPI):
         client_kwargs["proxy"] = QUOTAGUARD_URL
         logging.info(f"Using QuotaGuard static proxy, {NUM_WORKERS} max connections")
     else:
-        logging.warning("QUOTAGUARDSTATIC_URL is not set, using direct outbound")
+        logging.warning(f"QUOTAGUARDSTATIC_URL is not set, using direct outbound, {NUM_WORKERS} workers")
 
     http_client = httpx.AsyncClient(**client_kwargs)
 
-    # Pokreni worker-e i cleanup task u pozadini.
     for i in range(NUM_WORKERS):
         _background_tasks.append(asyncio.create_task(delivery_worker(i)))
     _background_tasks.append(asyncio.create_task(cleanup_old_messages()))
@@ -72,6 +76,21 @@ app = FastAPI(lifespan=lifespan)
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/stats")
+async def stats():
+    """Brzi uvid u stanje sistema - koliko poruka ceka, koliko je u bazi."""
+    breakdown: dict[str, int] = {}
+    for status, _ in message_status_db.values():
+        breakdown[status] = breakdown.get(status, 0) + 1
+
+    return {
+        "queue_size": delivery_queue.qsize(),
+        "num_workers": NUM_WORKERS,
+        "tracked_messages": len(message_status_db),
+        "status_breakdown": breakdown,
+    }
 
 
 @app.middleware("http")
@@ -109,12 +128,10 @@ async def submit_sms(request: Request):
     message_id = str(uuid.uuid4())
     message_status_db[message_id] = ("SENT", time.time())
 
-    # Jitter: 5-8 sekundi umesto fiksnih 5, da se burst od 500 poruka ne
-    # probudi svih istovremeno u istoj sekundi.
+    # Jitter: 5-8 sekundi, da se burst ne probudi sav u istoj sekundi.
     delay = 5 + random.uniform(0, 3)
 
-    # Samo stavi u red - ne pravi novu konekciju/task odmah.
-    await delivery_queue.put((message_id, ani, dnis, delay))
+    await delivery_queue.put((message_id, ani, dnis, delay, 1))
 
     return JSONResponse({
         "status": "submitted",
@@ -149,18 +166,22 @@ async def pull_report(request: Request):
 
 
 async def delivery_worker(worker_id: int):
-    """Jedan od NUM_WORKERS radnika. Vadi poruke iz reda i obradjuje ih
-    JEDNU PO JEDNU - to drzi memoriju stabilnom bez obzira koliko poruka
-    stigne odjednom na /api."""
+    """Jedan od NUM_WORKERS radnika.
+
+    KLJUCNO: finalni status (DELIVRD/UNDELIVRD) se upisuje u message_status_db
+    TEK kada downstream vrati HTTP 200. Dok se to ne desi, poruka ostaje "SENT",
+    a cleanup NE BRISE "SENT" zapise - tako se nijedna poruka ne izgubi iz
+    evidencije pre nego sto je isporuka stvarno potvrdjena.
+    """
     while True:
-        message_id, ani, dnis, delay = await delivery_queue.get()
+        item = await delivery_queue.get()
+        message_id, ani, dnis, delay = item[0], item[1], item[2], item[3]
+        attempt = item[4] if len(item) > 4 else 1
+
         try:
             await asyncio.sleep(delay)
 
             status = "DELIVRD" if random.random() < 0.9 else "UNDELIVRD"
-            message_status_db[message_id] = (status, time.time())
-
-            callback_url = "http://62.67.222.164:8003/api"
             payload = {
                 "command": "deliver",
                 "dlvrMsgId": message_id,
@@ -171,34 +192,64 @@ async def delivery_worker(worker_id: int):
                 "dnis": dnis,
             }
 
-            logging.info(f"[worker {worker_id}] Generating '{status}' for {message_id}")
-            logging.info(f"[worker {worker_id}] Sending callback to: {callback_url}")
+            logging.info(f"[worker {worker_id}] Generating '{status}' for {message_id} (attempt {attempt}/{MAX_RETRIES})")
+            logging.info(f"[worker {worker_id}] Sending callback to: {CALLBACK_URL}")
 
-            response = await http_client.get(callback_url, params=payload)
+            response = await http_client.get(CALLBACK_URL, params=payload)
 
-            logging.info(f"[worker {worker_id}] Callback response code: {response.status_code}")
-            logging.info(f"[worker {worker_id}] Callback response text: {response.text}")
+            if response.status_code == 200:
+                # Isporuka POTVRDJENA - tek sada upisujemo finalni status.
+                message_status_db[message_id] = (status, time.time())
+                logging.info(f"[worker {worker_id}] Callback response code: {response.status_code}")
+                logging.info(f"[worker {worker_id}] Callback response text: {response.text}")
+            else:
+                raise Exception(f"Non-200 response: {response.status_code}")
 
         except Exception as e:
-            logging.error(f"[worker {worker_id}] Callback ERROR for {message_id}: {type(e).__name__} - {e}")
+            logging.error(
+                f"[worker {worker_id}] Callback FAILED for {message_id} "
+                f"(attempt {attempt}/{MAX_RETRIES}): {type(e).__name__} - {e}"
+            )
+
+            if attempt < MAX_RETRIES:
+                # Vrati u red za jos jedan pokusaj.
+                # Status ostaje "SENT" -> cleanup ga NECE obrisati.
+                logging.info(
+                    f"[worker {worker_id}] Requeue {message_id} for retry "
+                    f"{attempt + 1}/{MAX_RETRIES} in {RETRY_DELAY}s"
+                )
+                await delivery_queue.put((message_id, ani, dnis, RETRY_DELAY, attempt + 1))
+            else:
+                # Svi pokusaji iscrpljeni - oznaci FAILED da ne ostane zauvek u memoriji.
+                message_status_db[message_id] = ("FAILED", time.time())
+                logging.error(
+                    f"[worker {worker_id}] GIVING UP on {message_id} after {MAX_RETRIES} attempts"
+                )
+
         finally:
             delivery_queue.task_done()
 
 
 async def cleanup_old_messages():
-    """Sprecava da message_status_db raste beskonacno tokom velikih testova.
-    NAPOMENA: 'SENT' zapisi se NIKAD ne brisu po vremenu - samo kad postanu
-    DELIVRD/UNDELIVRD i onda prodje TTL."""
+    """Sprecava da message_status_db raste beskonacno.
+
+    NAPOMENA: "SENT" zapisi se NIKAD ne brisu po vremenu - to su poruke koje
+    jos cekaju u redu ili cekaju retry. Brisu se samo zapisi koji su dobili
+    finalni status (DELIVRD / UNDELIVRD / FAILED) i kojima je proteklo TTL.
+    """
     while True:
         await asyncio.sleep(60)
         cutoff = time.time() - STATUS_TTL_SECONDS
+
         expired_with_status = [
             (mid, status) for mid, (status, ts) in message_status_db.items()
             if status != "SENT" and ts < cutoff
         ]
         expired = [mid for mid, _ in expired_with_status]
+
         for mid in expired:
             del message_status_db[mid]
+
         if expired:
             details = ", ".join(f"{mid[:8]}={status}" for mid, status in expired_with_status)
             logging.info(f"Cleanup: removed {len(expired)} expired records: {details}")
