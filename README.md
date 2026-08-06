@@ -1,68 +1,77 @@
-# SMS Simulator — Alaris
+# SMS Gateway Simulator
 
-A lightweight FastAPI service that simulates an SMS gateway (submit + delivery report flow) for testing the GetVerified / Alaris A2P messaging integration. It accepts submit requests the way a real SMSC would, then asynchronously sends a delivery report (`DELIVRD`/`UNDELIVRD`) callback a few seconds later.
+A lightweight FastAPI service that simulates a real SMS gateway — accepts submit requests, then asynchronously sends realistic delivery-report callbacks (`DELIVRD`/`UNDELIVRD`). Built for teams testing A2P messaging integrations who don't want to burn real SMS credits on every test run.
 
-Live URL: https://sms-simulator-alaris.onrender.com
+If you're integrating with an SMS provider (Twilio-style, SMPP-adjacent HTTP APIs, or a custom aggregator like Alaris/DigiTouch) and need to verify your submit → delivery-report flow, error handling, and retry logic — this simulates the other side so you can test end-to-end without sending a single real text message.
+
+## Why this exists
+
+Testing an SMS integration usually means either:
+- Sending real messages and paying for each one, or
+- Mocking the HTTP calls in isolation, which never tests the full async delivery-report flow
+
+This simulator behaves like an actual gateway: it accepts a submit, responds immediately, and — after a realistic delay — calls back to your delivery-report endpoint with a status. That means you can test your **whole pipeline**, including timing, retries, and how your system handles delayed or occasionally failed deliveries.
 
 ## How it works
 
-1. A submit request hits `GET /api`. Credentials and command are validated, a `message_id` is generated, and the message is placed on an internal queue. The endpoint responds immediately with `{"status": "submitted", "messageId": ...}` — it does **not** wait for delivery.
-2. A fixed pool of background workers pulls messages off that queue, one at a time per worker, waits a randomized 5–8 second delay (simulating real network delivery time), then sends a delivery-report callback to the configured callback URL through the QuotaGuard static proxy.
-3. Delivery status can be polled via `POST /sms/v2/pull-report`.
-
-## Endpoints
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/api` | Submit an SMS. Requires `username`, `password`, `ani`, `dnis`, `message`, `command=submit`. |
-| `POST` | `/sms/v2/pull-report` | Look up the delivery status of a previously submitted message by `transactionId`. |
-| `GET`/`HEAD` | `/health` | Health check used by Render and uptime monitors. |
-
-Test credentials: `testuser` / `testpass`.
+1. `GET /api` — submit an SMS. Validates credentials and command, generates a message ID, and queues it. Responds immediately — it does not wait for delivery.
+2. A fixed pool of background workers pulls from that queue, waits a randomized delay (simulating real network delivery time), then sends a delivery-report callback to your configured endpoint.
+3. `POST /sms/v2/pull-report` — poll delivery status by transaction ID.
+4. `GET /stats` — live view of queue depth, worker count, and message status breakdown.
 
 ## Architecture: queue + worker pool
 
-Earlier versions spawned a new `asyncio.create_task` and a brand-new `httpx.AsyncClient` (new TCP/TLS handshake through the proxy) **per submitted message**. Under burst traffic (300–500+ messages/minute), this caused the Render Free instance to run out of its 512MB memory limit and crash, silently dropping every in-flight message.
+Instead of spawning a new connection per message (which falls over under burst traffic), this uses:
+- **One shared HTTP client** with a bounded connection pool
+- **A fixed number of worker coroutines** pulling from a single queue — memory usage stays roughly constant no matter how many messages arrive at once
+- **Randomized delay jitter** so a burst of submits doesn't wake up every worker in the same instant
+- **Retry logic with backoff** — if a callback fails, the message is retried rather than silently lost, and its status stays `SENT` (not falsely marked delivered) until a callback actually succeeds
 
-The current design instead:
-- Uses **one shared `httpx.AsyncClient`** with a bounded connection pool, created once at startup.
-- Runs a **fixed number of worker coroutines** (`NUM_WORKERS`) that pull from a single `asyncio.Queue`, processing messages one at a time per worker instead of all at once.
-- Adds **random jitter** (5–8s instead of a fixed 5s) to the delivery delay so a burst of submits doesn't wake up hundreds of workers in the same instant.
+## Quick start
 
-This keeps memory usage roughly constant regardless of how many messages arrive at once — incoming volume affects how long the queue is, not how much RAM is in use at any given moment.
+```bash
+git clone <this-repo>
+cd sms-simulator-alaris
+docker compose up -d --build
+```
 
-## Status tracking and cleanup
+Test it:
+```bash
+curl "http://localhost:8000/health"
 
-Message statuses (`SENT` → `DELIVRD`/`UNDELIVRD`) are kept in an in-memory dict (`message_status_db`) so `/sms/v2/pull-report` has something to answer with. A background task clears out entries older than `STATUS_TTL_SECONDS` (default 300s) every 60 seconds — **but only entries that have already reached a final status**. A message still sitting in the queue (status `SENT`) is never deleted by the cleanup task, no matter how long it waits, so a busy queue can't cause a lookup to go missing.
+curl "http://localhost:8000/api?username=testuser&password=testpass&ani=TEST&dnis=15550001234&message=Hello&command=submit"
 
-## Environment variables
+curl "http://localhost:8000/stats"
+```
+
+## Configuration
+
+All settings are environment variables (set them in `docker-compose.yml` or your environment):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `QUOTAGUARDSTATIC_URL` | — | Proxy URL used for outbound delivery callbacks (static IP for allowlisting). If unset, callbacks go out directly. |
-| `NUM_WORKERS` | `10` | Number of concurrent delivery workers. Higher values process the queue faster but open more simultaneous connections — watch memory on constrained instances. |
+| `CALLBACK_URL` | `http://62.67.222.164:8003/api` | Where delivery-report callbacks are sent. **Set this to your own endpoint.** |
+| `SIM_USERNAME` / `SIM_PASSWORD` | `testuser` / `testpass` | Credentials the simulator accepts on `/api`. |
+| `SIM_ACCOUNT` | `111` | Account value accepted on `/sms/v2/pull-report`. |
+| `NUM_WORKERS` | `50` | Concurrent delivery workers. Raise for higher throughput, watch memory on small instances. |
+| `DELIVERY_SUCCESS_RATE` | `0.9` | Fraction of messages marked `DELIVRD` vs `UNDELIVRD`. |
+| `MIN_DELAY_SECONDS` / `MAX_DELAY_SECONDS` | `5` / `8` | Delay range before a delivery-report callback is sent. |
+| `MAX_RETRIES` | `3` | Callback retry attempts before giving up. |
+| `RETRY_DELAY_SECONDS` | `10` | Wait between retry attempts. |
+| `STATUS_TTL_SECONDS` | `300` | How long a finished message's status is kept before cleanup. |
+| `QUOTAGUARDSTATIC_URL` | *(unset)* | Optional HTTP proxy for outbound callbacks (e.g. if you need a static IP for allowlisting and aren't hosting on infrastructure that already provides one). |
 
-## Requirements
+## Deployment notes
 
-```
-fastapi
-uvicorn
-httpx
-```
+- Runs comfortably on a small VPS (2 vCPU / 4GB handles 50+ concurrent workers with CPU usage in the low single digits under real traffic).
+- If your callback destination requires IP allowlisting, deploy somewhere with a static outbound IP (most VPS providers give you one by default — no proxy needed).
+- Docker logging is capped (`max-size`/`max-file` in `docker-compose.yml`) so logs don't grow unbounded under sustained traffic.
 
-(`asyncio` and `uuid` are part of the Python standard library and don't belong in `requirements.txt`.)
+## Known limitations
 
-## Deployment notes (Render)
+- Queue and status tracking are in-memory — a restart loses anything still in flight. Fine for testing; would need Redis or a database for anything requiring durability across restarts.
+- Single-process — for very high sustained throughput across multiple cores, you'd want to run multiple instances behind a load balancer.
 
-This service currently runs on Render's **Free** instance type: 512MB RAM, 0.15 CPU. A few things follow from that:
+## License
 
-- The **Metrics** tab only shows Outbound Bandwidth on Free — live Memory/CPU graphs require a paid instance type. The **Events** tab is the only way to see past OOM kills (`Instance failed: Ran out of memory`).
-- The free instance spins down after 15 minutes of inactivity, adding 50+ seconds to the first request after idle.
-- `NUM_WORKERS` is a tuning knob for this constraint: more workers drain the queue faster but each one may hold an open connection during its callback, so pushing it too high risks OOM again. Increase gradually and watch the Events tab after each change.
-
-## Known limitations / possible next steps
-
-- The queue and status dict are **in-memory only** — a restart or crash loses anything still in flight. Fine for a test simulator; would need Redis or a database for anything that must survive a restart.
-- No `/stats` endpoint yet to see queue depth or worker load live — currently the only way to gauge backlog is reading logs or noticing delayed callbacks.
-- Failure rate (currently a fixed 10%) and delay range (5–8s) are hardcoded — could be made configurable via environment variables for testing different network conditions.
-- No automated tests (pytest) or CI yet to catch syntax/logic errors before deploy.
+MIT — use it, modify it, deploy it for clients. See `LICENSE`.
