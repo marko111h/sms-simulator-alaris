@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI):
     for i in range(NUM_WORKERS):
         _background_tasks.append(asyncio.create_task(delivery_worker(i)))
     _background_tasks.append(asyncio.create_task(cleanup_old_messages()))
+    _background_tasks.append(asyncio.create_task(hourly_summary()))
 
     yield
 
@@ -257,3 +258,16 @@ async def cleanup_old_messages():
         if expired:
             details = ", ".join(f"{mid[:8]}={status}" for mid, status in expired_with_status)
             logging.info(f"Cleanup: removed {len(expired)} expired records: {details}")
+
+async def hourly_summary():
+    """Ispisuje sazet pregled jednom na sat - koliko poruka isporuceno/palo."""
+    while True:
+        await asyncio.sleep(3600)
+        delivered = sum(1 for s, _ in message_status_db.values() if s == "DELIVRD")
+        undelivered = sum(1 for s, _ in message_status_db.values() if s == "UNDELIVRD")
+        failed = sum(1 for s, _ in message_status_db.values() if s == "FAILED")
+        pending = sum(1 for s, _ in message_status_db.values() if s == "SENT")
+        logging.info(
+            f"HOURLY SUMMARY: {delivered} delivered, {undelivered} undelivered, "
+            f"{failed} failed, {pending} pending, queue_size={delivery_queue.qsize()}"
+        )
